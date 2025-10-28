@@ -1,0 +1,94 @@
+{
+    "@context": [
+        "https://geojson.org/geojson-ld/geojson-context.jsonld",
+        {
+            "@version": "1.1",
+            "wx": "https://api.weather.gov/ontology#",
+            "s": "https://schema.org/",
+            "geo": "http://www.opengis.net/ont/geosparql#",
+            "unit": "http://codes.wmo.int/common/unit/",
+            "@vocab": "https://api.weather.gov/ontology#",
+            "geometry": {
+                "@id": "s:GeoCoordinates",
+                "@type": "geo:wktLiteral"
+            },
+            "city": "s:addressLocality",
+            "state": "s:addressRegion",
+            "distance": {
+                "@id": "s:Distance",
+                "@type": "s:QuantitativeValue"
+            },
+            "bearing": {
+                "@type": "s:QuantitativeValue"
+            },
+            "value": {
+                "@id": "s:value"
+            },
+            "unitCode": {
+                "@id": "s:unitCode",
+                "@type": "@id"
+            },
+            "forecastOffice": {
+                "@type": "@id"
+            },
+            "forecastGridData": {
+                "@type": "@id"
+            },
+            "publicZone": {
+                "@type": "@id"
+            },
+            "county": {
+                "@type": "@id"
+            }
+        }
+    ],
+    "id": "https://api.weather.gov/points/33.0775,-116.4383",
+    "type": "Feature",
+    "geometry": {
+        "type": "Point",
+        "coordinates": [
+            -116.4383,
+            33.077500000000001
+        ]
+    },
+    "properties": {
+        "@id": "https://api.weather.gov/points/33.0775,-116.4383",
+        "@type": "wx:Point",
+        "cwa": "SGX",
+        "forecastOffice": "https://api.weather.gov/offices/SGX",
+        "gridId": "SGX",
+        "gridX": 86,
+        "gridY": 25,
+        "forecast": "https://api.weather.gov/gridpoints/SGX/86,25/forecast",
+        "forecastHourly": "https://api.weather.gov/gridpoints/SGX/86,25/forecast/hourly",
+        "forecastGridData": "https://api.weather.gov/gridpoints/SGX/86,25",
+        "observationStations": "https://api.weather.gov/gridpoints/SGX/86,25/stations",
+        "relativeLocation": {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -116.588967,
+                    33.073594
+                ]
+            },
+            "properties": {
+                "city": "Julian",
+                "state": "CA",
+                "distance": {
+                    "unitCode": "wmoUnit:m",
+                    "value": 14045.280872496
+                },
+                "bearing": {
+                    "unitCode": "wmoUnit:degree_(angle)",
+                    "value": 88
+                }
+            }
+        },
+        "forecastZone": "https://api.weather.gov/zones/forecast/CAZ062",
+        "county": "https://api.weather.gov/zones/county/CAC073",
+        "fireWeatherZone": "https://api.weather.gov/zones/fire/CAZ262",
+        "timeZone": "America/Los_Angeles",
+        "radarStation": "KNKX"
+    }
+}

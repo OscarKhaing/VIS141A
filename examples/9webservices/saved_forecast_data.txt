@@ -1,0 +1,42 @@
+Today,2025-02-12T09:00:00-08:00,52F,60,Light Rain Likely
+Tonight,2025-02-12T18:00:00-08:00,47F,80,Light Rain
+Thursday,2025-02-13T06:00:00-08:00,59F,90,Rain
+Thursday Night,2025-02-13T18:00:00-08:00,47F,90,Rain
+Friday,2025-02-14T06:00:00-08:00,54F,70,Rain Showers Likely
+Friday Night,2025-02-14T18:00:00-08:00,41F,40,Chance Rain Showers
+Saturday,2025-02-15T06:00:00-08:00,63F,None,Sunny
+Saturday Night,2025-02-15T18:00:00-08:00,47F,None,Partly Cloudy
+Sunday,2025-02-16T06:00:00-08:00,68F,None,Partly Sunny
+Sunday Night,2025-02-16T18:00:00-08:00,50F,None,Mostly Cloudy
+Washington's Birthday,2025-02-17T06:00:00-08:00,71F,None,Mostly Sunny
+Monday Night,2025-02-17T18:00:00-08:00,47F,None,Mostly Clear
+Tuesday,2025-02-18T06:00:00-08:00,67F,None,Sunny
+Tuesday Night,2025-02-18T18:00:00-08:00,48F,None,Mostly Clear
+Today,2025-02-25T10:00:00-08:00,84F,None,Sunny
+Tonight,2025-02-25T18:00:00-08:00,57F,None,Mostly Clear
+Wednesday,2025-02-26T06:00:00-08:00,82F,None,Sunny
+Wednesday Night,2025-02-26T18:00:00-08:00,53F,None,Mostly Clear
+Thursday,2025-02-27T06:00:00-08:00,71F,None,Mostly Sunny
+Thursday Night,2025-02-27T18:00:00-08:00,49F,None,Mostly Clear
+Friday,2025-02-28T06:00:00-08:00,69F,None,Mostly Sunny
+Friday Night,2025-02-28T18:00:00-08:00,48F,None,Slight Chance Rain Showers
+Saturday,2025-03-01T06:00:00-08:00,70F,None,Sunny
+Saturday Night,2025-03-01T18:00:00-08:00,48F,None,Partly Cloudy then Slight Chance Rain Showers
+Sunday,2025-03-02T06:00:00-08:00,67F,None,Chance Rain Showers
+Sunday Night,2025-03-02T18:00:00-08:00,46F,None,Chance Rain Showers
+Monday,2025-03-03T06:00:00-08:00,59F,None,Chance Rain Showers
+Monday Night,2025-03-03T18:00:00-08:00,43F,None,Chance Rain Showers
+Today,2025-02-25T10:00:00-08:00,84F,None,Sunny
+Tonight,2025-02-25T18:00:00-08:00,57F,None,Mostly Clear
+Wednesday,2025-02-26T06:00:00-08:00,82F,None,Sunny
+Wednesday Night,2025-02-26T18:00:00-08:00,53F,None,Mostly Clear
+Thursday,2025-02-27T06:00:00-08:00,71F,None,Mostly Sunny
+Thursday Night,2025-02-27T18:00:00-08:00,49F,None,Mostly Clear
+Friday,2025-02-28T06:00:00-08:00,69F,None,Mostly Sunny
+Friday Night,2025-02-28T18:00:00-08:00,48F,None,Slight Chance Rain Showers
+Saturday,2025-03-01T06:00:00-08:00,70F,None,Sunny
+Saturday Night,2025-03-01T18:00:00-08:00,48F,None,Partly Cloudy then Slight Chance Rain Showers
+Sunday,2025-03-02T06:00:00-08:00,67F,None,Chance Rain Showers
+Sunday Night,2025-03-02T18:00:00-08:00,46F,None,Chance Rain Showers
+Monday,2025-03-03T06:00:00-08:00,59F,None,Chance Rain Showers
+Monday Night,2025-03-03T18:00:00-08:00,43F,None,Chance Rain Showers
