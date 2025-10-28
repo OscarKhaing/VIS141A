@@ -55,6 +55,9 @@ examples/*.png
 examples/ashc
 examples/fileinput/textfile.txt
 
+# Generated audio files
+saves/assets/*.wav
+
 # Database
 *.db-journal
 

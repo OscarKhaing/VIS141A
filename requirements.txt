@@ -1,0 +1,11 @@
+# Music-Driven Multi-Screen Visualization Wall
+# Dependencies for Part 1: Base Implementation
+
+# MPI for distributed computing
+mpi4py>=3.1.0
+
+# Numerical computing and audio processing
+numpy>=1.21.0
+
+# Graphics and visualization
+pygame>=2.1.0
