@@ -57,6 +57,7 @@ examples/fileinput/textfile.txt
 
 # Generated audio files
 saves/assets/*.wav
+saves/assets/*.mp3
 
 # Database
 *.db-journal
