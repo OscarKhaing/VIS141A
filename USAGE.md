@@ -158,24 +158,41 @@ mpiexec -n 4 python3 visualize.py song.mp3
 
 ---
 
-## File Locations
+## Deploying to Cluster
 
+The `saves/` directory is standalone and can be copied directly to cluster machines:
+
+```bash
+# Copy saves/ folder to cluster
+scp -r saves/ user@cluster:/path/to/destination/
+
+# On cluster, run visualization
+cd saves
+mpiexec -n 4 -pernode --machinefile mach_file python3 visualize.py song.mp3
+```
+
+### Required Files in saves/
+
+**Core files (required):**
 ```
 saves/
-├── visualize.py                # ← Main all-in-one script
-├── wall.py                     # Original MPI visualizer
-├── convert_mp3_to_wav.py       # Manual converter
-├── generate_test_audio.py      # Test audio generator
-├── test_visualize_logic.py     # Unit tests
-├── audio.py                    # Audio processing
-├── visuals.py                  # Rendering
-├── config.py                   # Configuration
-└── assets/                     # Audio files
-    ├── sine_sweep.wav
-    ├── beats_120bpm.wav
-    ├── music_test.wav
-    └── lone_digger.{mp3,wav}
+├── visualize.py        # Main all-in-one script
+├── config.py           # Configuration constants
+├── audio.py            # Audio processing (STFT, mel, beat detection)
+├── visuals.py          # Rendering and visualization
+└── assets/             # Audio files (optional, or provide your own)
 ```
+
+**Optional files (for testing/utilities):**
+```
+saves/
+├── wall.py                     # Original MPI visualizer (testing)
+├── convert_mp3_to_wav.py       # Manual MP3→WAV converter
+├── generate_test_audio.py      # Generate test audio files
+└── test_visualize_logic.py     # Unit tests for audio detection
+```
+
+**Note:** The saves/ folder is self-contained. Just copy it to any machine with Python, MPI, and dependencies installed.
 
 ---
 

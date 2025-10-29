@@ -1,23 +1,125 @@
 #!/usr/bin/env python3
 """
 All-in-One Music Visualization Script
-Automatically detects audio format (MP3/WAV), converts if needed, and launches MPI visualization.
+======================================
 
-Usage:
-    mpiexec -n 4 python3 visualize.py <audio_file> [--debug] [--keep-converted]
+Automatically detects audio format (MP3/WAV), converts if needed, and launches
+synchronized 4-screen (2x2 grid) MPI visualization with real-time audio analysis.
 
-Examples:
-    mpiexec -n 4 python3 visualize.py song.mp3
-    mpiexec -n 4 python3 visualize.py song.wav --debug
-    mpiexec -n 4 python3 visualize.py assets/lone_digger.mp3 --keep-converted
+USAGE
+-----
+    Local (single machine):
+        mpiexec -n 4 python3 visualize.py <audio_file> [options]
 
-Features:
-    - Auto-detects MP3 vs WAV format
-    - Converts MP3 to WAV (mono, 44.1kHz) if needed
-    - Validates WAV format (mono, 44.1kHz)
-    - Launches synchronized 4-screen MPI visualization
-    - Optional debug HUD
-    - Cleanup of temporary converted files
+    Cluster (multiple machines):
+        mpiexec -n 4 -pernode --machinefile mach_file python3 visualize.py <audio_file> [options]
+
+EXAMPLES
+--------
+    Basic usage (WAV file):
+        mpiexec -n 4 python3 visualize.py assets/sine_sweep.wav
+
+    Auto-convert MP3:
+        mpiexec -n 4 python3 visualize.py assets/lone_digger.mp3
+
+    With debug HUD:
+        mpiexec -n 4 python3 visualize.py song.mp3 --debug
+
+    Keep converted files:
+        mpiexec -n 4 python3 visualize.py song.mp3 --keep-converted
+
+    Cluster deployment:
+        mpiexec -n 4 -pernode --machinefile mach_file python3 visualize.py song.mp3
+
+OPTIONS
+-------
+    --debug             Show debug HUD with frame info, FPS, beat detection
+    --keep-converted    Keep temporary converted WAV files (don't auto-delete)
+
+FEATURES
+--------
+    - Auto-detects MP3 vs WAV format (by extension and file header)
+    - Converts MP3 to WAV (mono, 44.1kHz, 16-bit) automatically if needed
+    - Validates WAV format (ensures mono 44.1kHz requirement)
+    - Launches synchronized 4-screen MPI visualization (2x2 grid)
+    - Real-time audio analysis: STFT, mel filterbank, beat detection
+    - Beat-responsive visuals: color changes, height boosts, flash effects
+    - 4 color palettes, 4 scene backgrounds (cycle on beats)
+    - 30 FPS synchronized rendering across all ranks
+    - Auto-cleanup of temporary converted files
+
+REQUIREMENTS
+------------
+    - Python 3.9+
+    - MPI implementation (OpenMPI or MPICH)
+    - mpi4py, numpy, pygame (see requirements.txt)
+    - 4 MPI processes (2x2 grid)
+    - Display server (X11 for Linux/macOS)
+
+AUDIO FORMATS
+-------------
+    Input:  MP3 (.mp3) or WAV (.wav)
+    Output: Mono WAV, 44.1kHz, 16-bit PCM (if conversion needed)
+
+    Note: For WAV files, must already be mono 44.1kHz.
+          For MP3 files, auto-converts to correct format.
+
+CONTROLS
+--------
+    ESC or Q        Quit visualization
+    Ctrl+C          Force quit (all ranks)
+
+CLUSTER DEPLOYMENT
+------------------
+    Create machine file (mach_file) with one hostname per line:
+        host1
+        host2
+        host3
+        host4
+
+    Then run:
+        mpiexec -n 4 -pernode --machinefile mach_file python3 visualize.py song.mp3
+
+    The -pernode flag ensures one process per machine (for 4 physical screens).
+
+TROUBLESHOOTING
+---------------
+    "This program requires 4 MPI processes"
+        → Always use: mpiexec -n 4
+
+    "cannot load MPI library"
+        → Don't run directly with python3, use mpiexec
+
+    "WAV must be mono" or "WAV must be 44100Hz"
+        → Use MP3 instead (auto-converts), or convert manually:
+          python3 convert_mp3_to_wav.py input.mp3
+
+    Windows not appearing
+        → Check DISPLAY environment: export DISPLAY=:0
+
+    Low FPS / stuttering
+        → Use Ethernet (not WiFi) for cluster
+        → Lower TARGET_FPS in config.py
+        → Use shorter audio files for testing
+
+FILE STRUCTURE
+--------------
+    Required files in same directory (saves/):
+        - visualize.py (this file)
+        - config.py
+        - audio.py
+        - visuals.py
+
+    Optional (for testing):
+        - wall.py (original MPI visualizer)
+        - convert_mp3_to_wav.py (manual converter)
+        - generate_test_audio.py (test audio generator)
+
+AUTHOR
+------
+    VIS 141A - Visual Arts with MPI
+    Music-Driven Multi-Screen Visualization Wall (Part 1)
+    Using MPI patterns from examples: oneball.py, images.py, bcast.py
 """
 
 import os
