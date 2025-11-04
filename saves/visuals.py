@@ -48,7 +48,7 @@ class BarVisualizer:
         self.beat_boost_current = 1.0
         self.beat_glow = 0.0
 
-    def render(self, screen, frame_data):
+    def render(self, screen, frame_data, neighbor_brightness=1.0):
         """
         Render visualization frame.
 
@@ -59,6 +59,7 @@ class BarVisualizer:
                 - 'beat': beat flag
                 - 'scene': scene index
                 - 'palette': palette index
+            neighbor_brightness: brightness multiplier from neighbor coupling (default=1.0)
         """
         # Extract parameters
         all_bands = frame_data['bands']
@@ -68,6 +69,9 @@ class BarVisualizer:
 
         # Get assigned band slice
         bands_slice = all_bands[self.band_start:self.band_end]
+
+        # Apply neighbor brightness modulation (Part 2)
+        bands_slice = bands_slice * neighbor_brightness
 
         # Update beat effect
         if beat:
@@ -161,7 +165,7 @@ class BarVisualizer:
         return (r, g, b)
 
 
-def render_debug_hud(screen, frame_data, rank, font=None):
+def render_debug_hud(screen, frame_data, rank, font=None, neighbor_data=None):
     """
     Render debug HUD showing frame info.
 
@@ -170,6 +174,7 @@ def render_debug_hud(screen, frame_data, rank, font=None):
         frame_data: dict with 'tick', 't_sec', 'flux', 'beat', etc.
         rank: MPI rank
         font: pygame Font object (optional, creates default if None)
+        neighbor_data: dict with 'local_energy', 'neighbors', 'brightness' (optional, Part 2)
     """
     if font is None:
         font = pygame.font.SysFont('monospace', 12)
@@ -187,6 +192,17 @@ def render_debug_hud(screen, frame_data, rank, font=None):
         f"Flux: {flux:.3f}",
         f"Beat: {'YES' if beat else 'no'}",
     ]
+
+    # Add neighbor coupling info if available (Part 2)
+    if neighbor_data:
+        lines.append("")
+        lines.append(f"Local E: {neighbor_data.get('local_energy', 0.0):.3f}")
+        nbr = neighbor_data.get('neighbors', {})
+        lines.append(f"Nbr N: {nbr.get('N', 0.0):.3f}")
+        lines.append(f"Nbr S: {nbr.get('S', 0.0):.3f}")
+        lines.append(f"Nbr W: {nbr.get('W', 0.0):.3f}")
+        lines.append(f"Nbr E: {nbr.get('E', 0.0):.3f}")
+        lines.append(f"Bright: {neighbor_data.get('brightness', 1.0):.3f}")
 
     # Render text
     y_offset = 10

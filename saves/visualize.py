@@ -28,16 +28,21 @@ EXAMPLES
     Keep converted files:
         mpiexec -n 4 python3 visualize.py song.mp3 --keep-converted
 
+    Enable neighbor coupling (Part 2):
+        mpiexec -n 4 python3 visualize.py song.mp3 --neighbor-coupling
+
     Cluster deployment:
         mpiexec -n 4 -pernode --machinefile mach_file python3 visualize.py song.mp3
 
 OPTIONS
 -------
-    --debug             Show debug HUD with frame info, FPS, beat detection
-    --keep-converted    Keep temporary converted WAV files (don't auto-delete)
+    --debug                Show debug HUD with frame info, FPS, beat detection
+    --keep-converted       Keep temporary converted WAV files (don't auto-delete)
+    --neighbor-coupling    Enable Part 2: tiles influence each other's brightness
 
 FEATURES
 --------
+    Part 1 (Base Implementation):
     - Auto-detects MP3 vs WAV format (by extension and file header)
     - Converts MP3 to WAV (mono, 44.1kHz, 16-bit) automatically if needed
     - Validates WAV format (ensures mono 44.1kHz requirement)
@@ -47,6 +52,13 @@ FEATURES
     - 4 color palettes, 4 scene backgrounds (cycle on beats)
     - 30 FPS synchronized rendering across all ranks
     - Auto-cleanup of temporary converted files
+
+    Part 2 (Neighbor Coupling - Optional):
+    - Cartesian MPI topology for 2D grid communication
+    - Neighbor energy exchange (N/S/E/W) using Sendrecv
+    - Brightness modulation based on adjacent tile energies
+    - Smoothed neighbor influence (alpha=0.2) to avoid flicker
+    - Debug HUD shows local energy and neighbor values
 
 REQUIREMENTS
 ------------
@@ -118,7 +130,9 @@ FILE STRUCTURE
 AUTHOR
 ------
     VIS 141A - Visual Arts with MPI
-    Music-Driven Multi-Screen Visualization Wall (Part 1)
+    Music-Driven Multi-Screen Visualization Wall (Parts 1 & 2)
+    Part 1: Base implementation with synchronized audio-reactive visuals
+    Part 2: Neighbor coupling for inter-tile influence (optional flag)
     Using MPI patterns from examples: oneball.py, images.py, bcast.py
 """
 
@@ -315,6 +329,61 @@ def prepare_audio_file(input_path, keep_converted=False, rank=0):
 
 
 # ============================================================================
+# Part 2: Neighbor Coupling
+# ============================================================================
+
+def exchange_neighbor_energy(cart, local_bands, nbr_smooth, alpha):
+    """
+    Exchange local energy with neighbors and update smoothed values.
+    (Part 2: Neighbor Coupling)
+
+    Args:
+        cart: MPI Cartesian communicator
+        local_bands: numpy array of local mel band energies
+        nbr_smooth: dict of smoothed neighbor energies {"N":0.0, "S":0.0, "W":0.0, "E":0.0}
+        alpha: smoothing factor (0-1)
+
+    Returns:
+        tuple (local_energy, updated nbr_smooth dict)
+    """
+    # Calculate local energy (mean of local bands)
+    local_energy = float(local_bands.mean())
+
+    # Prepare send buffer
+    send_buf = np.array([local_energy], dtype=np.float32)
+
+    # Exchange with each neighbor: N, S, W, E
+    # Cartesian topology: dim 0 = rows (N/S), dim 1 = cols (W/E)
+    neighbors = [
+        (0, -1, "N"),  # North: row dim, shift -1
+        (0,  1, "S"),  # South: row dim, shift +1
+        (1, -1, "W"),  # West: col dim, shift -1
+        (1,  1, "E"),  # East: col dim, shift +1
+    ]
+
+    for dim, disp, key in neighbors:
+        # Get source and destination ranks
+        src, dst = cart.Shift(dim, disp)
+
+        # Receive buffer
+        recv_buf = np.zeros(1, dtype=np.float32)
+
+        # Exchange if neighbor exists (not PROC_NULL)
+        if dst != MPI.PROC_NULL and src != MPI.PROC_NULL:
+            cart.Sendrecv(
+                sendbuf=send_buf, dest=dst,
+                recvbuf=recv_buf, source=src
+            )
+            # Smooth the received value
+            nbr_smooth[key] = (1.0 - alpha) * nbr_smooth[key] + alpha * recv_buf[0]
+        else:
+            # No neighbor in this direction (edge of grid)
+            nbr_smooth[key] = 0.0
+
+    return local_energy, nbr_smooth
+
+
+# ============================================================================
 # MPI Visualization Setup
 # ============================================================================
 
@@ -357,13 +426,14 @@ def setup_pygame_window(rank):
 # Main Visualization Loop
 # ============================================================================
 
-def run_visualization(wav_path, debug=False, rank=0, comm=None):
+def run_visualization(wav_path, debug=False, neighbor_coupling=False, rank=0, comm=None):
     """
     Run the main MPI visualization loop.
 
     Args:
         wav_path: Path to WAV file
         debug: Show debug HUD
+        neighbor_coupling: Enable Part 2 neighbor coupling (default=False)
         rank: MPI rank
         comm: MPI communicator
     """
@@ -375,6 +445,17 @@ def run_visualization(wav_path, debug=False, rank=0, comm=None):
 
     # Font for debug HUD
     debug_font = pygame.font.SysFont('monospace', 12) if debug else None
+
+    # Part 2: Setup Cartesian topology if neighbor coupling enabled
+    cart = None
+    nbr_smooth = None
+    if neighbor_coupling:
+        # Create 2D Cartesian topology (2x2 grid, non-periodic)
+        cart = comm.Create_cart((GRID_P, GRID_Q), periods=(False, False), reorder=False)
+        # Initialize smoothed neighbor energy dict
+        nbr_smooth = {"N": 0.0, "S": 0.0, "W": 0.0, "E": 0.0}
+        if rank == 0:
+            print("[Rank 0] Part 2: Neighbor coupling enabled")
 
     # Rank 0: Initialize audio stream
     audio_stream = None
@@ -431,13 +512,44 @@ def run_visualization(wav_path, debug=False, rank=0, comm=None):
                 break
 
             # ================================================================
+            # PART 2: Neighbor Coupling (if enabled)
+            # ================================================================
+            neighbor_brightness = 1.0
+            neighbor_debug_data = None
+
+            if neighbor_coupling and cart is not None and nbr_smooth is not None:
+                # Get local band slice for this rank
+                all_bands = frame_data['bands']
+                band_start = rank * BANDS_PER_RANK
+                band_end = (rank + 1) * BANDS_PER_RANK
+                local_bands = all_bands[band_start:band_end]
+
+                # Exchange energy with neighbors
+                local_energy, nbr_smooth = exchange_neighbor_energy(
+                    cart, local_bands, nbr_smooth, NEIGHBOR_COUPLING_ALPHA
+                )
+
+                # Calculate brightness modulation
+                max_neighbor = max(nbr_smooth.values())
+                neighbor_brightness = NEIGHBOR_BASE_BRIGHTNESS * (
+                    1.0 + NEIGHBOR_COUPLING_K * max_neighbor
+                )
+
+                # Prepare debug data
+                neighbor_debug_data = {
+                    'local_energy': local_energy,
+                    'neighbors': nbr_smooth.copy(),
+                    'brightness': neighbor_brightness
+                }
+
+            # ================================================================
             # ALL RANKS: Render visualization
             # ================================================================
-            visualizer.render(screen, frame_data)
+            visualizer.render(screen, frame_data, neighbor_brightness=neighbor_brightness)
 
             # Render debug HUD if enabled
             if debug:
-                render_debug_hud(screen, frame_data, rank, debug_font)
+                render_debug_hud(screen, frame_data, rank, debug_font, neighbor_data=neighbor_debug_data)
 
             # Update display
             pygame.display.update()
@@ -512,6 +624,11 @@ Examples:
         action='store_true',
         help='Keep converted WAV files (don\'t delete temporary files)'
     )
+    parser.add_argument(
+        '--neighbor-coupling',
+        action='store_true',
+        help='Enable Part 2 neighbor coupling (tiles influence each other)'
+    )
 
     args = parser.parse_args()
 
@@ -543,7 +660,13 @@ Examples:
         is_temporary = comm.bcast(is_temporary, root=0)
 
         # Run visualization
-        run_visualization(wav_path, args.debug, rank, comm)
+        run_visualization(
+            wav_path,
+            debug=args.debug,
+            neighbor_coupling=args.neighbor_coupling,
+            rank=rank,
+            comm=comm
+        )
 
     except Exception as e:
         if rank == 0:

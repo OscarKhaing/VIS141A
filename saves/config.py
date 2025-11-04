@@ -104,6 +104,13 @@ FMIN = 20.0      # Minimum frequency (Hz)
 FMAX = 8000.0    # Maximum frequency (Hz)
 
 # ============================================================================
+# Part 2: Neighbor Coupling Configuration
+# ============================================================================
+NEIGHBOR_COUPLING_ALPHA = 0.2   # Smoothing factor for neighbor energy (0-1)
+NEIGHBOR_COUPLING_K = 0.6       # Coupling strength multiplier
+NEIGHBOR_BASE_BRIGHTNESS = 0.9  # Base brightness when using neighbor coupling
+
+# ============================================================================
 # Data Types
 # ============================================================================
 DTYPE_FLOAT = 'float32'
