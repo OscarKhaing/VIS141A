@@ -59,6 +59,9 @@ examples/fileinput/textfile.txt
 saves/assets/*.wav
 saves/assets/*.mp3
 
+# Generated preview images
+saves/previews/
+
 # Database
 *.db-journal
 
