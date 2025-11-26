@@ -56,7 +56,7 @@ from pathlib import Path
 # Import local modules
 from config import *
 from audio import AudioStream
-from visuals import BarVisualizer
+from visuals import BarVisualizer, WaveVisualizer
 
 
 def find_interesting_moments(audio_stream, num_samples=4):
@@ -153,7 +153,7 @@ def seek_to_time(audio_stream, target_time):
     return frame
 
 
-def render_grid_composite(frame_data, palette_override=None, show_grid=False):
+def render_grid_composite(frame_data, palette_override=None, show_grid=False, viz_mode='wave'):
     """
     Render full 2×2 grid composite with all 4 ranks.
 
@@ -161,6 +161,7 @@ def render_grid_composite(frame_data, palette_override=None, show_grid=False):
         frame_data: Frame data dict with bands, beat, scene, palette
         palette_override: Force specific palette (0-3) or None
         show_grid: Draw grid lines between ranks
+        viz_mode: Visualization mode ('wave' or 'bar')
 
     Returns:
         pygame.Surface with full composite (1920×1080)
@@ -177,8 +178,11 @@ def render_grid_composite(frame_data, palette_override=None, show_grid=False):
 
     # Render each rank
     for rank in range(TOTAL_RANKS):
-        # Create visualizer for this rank
-        visualizer = BarVisualizer(rank, WIN_W, WIN_H)
+        # Create visualizer for this rank based on mode
+        if viz_mode == 'wave':
+            visualizer = WaveVisualizer(rank, WIN_W, WIN_H)
+        else:
+            visualizer = BarVisualizer(rank, WIN_W, WIN_H)
 
         # Create offscreen surface
         screen = pygame.Surface((WIN_W, WIN_H))
@@ -222,7 +226,7 @@ def render_grid_composite(frame_data, palette_override=None, show_grid=False):
     return composite
 
 
-def render_individual_rank(frame_data, rank, palette_override=None):
+def render_individual_rank(frame_data, rank, palette_override=None, viz_mode='wave'):
     """
     Render single rank visualization.
 
@@ -230,6 +234,7 @@ def render_individual_rank(frame_data, rank, palette_override=None):
         frame_data: Frame data dict
         rank: Rank number (0-3)
         palette_override: Force specific palette or None
+        viz_mode: Visualization mode ('wave' or 'bar')
 
     Returns:
         pygame.Surface with rank visualization
@@ -239,8 +244,11 @@ def render_individual_rank(frame_data, rank, palette_override=None):
         frame_data = frame_data.copy()
         frame_data['palette'] = palette_override
 
-    # Create visualizer
-    visualizer = BarVisualizer(rank, WIN_W, WIN_H)
+    # Create visualizer based on mode
+    if viz_mode == 'wave':
+        visualizer = WaveVisualizer(rank, WIN_W, WIN_H)
+    else:
+        visualizer = BarVisualizer(rank, WIN_W, WIN_H)
 
     # Create offscreen surface
     screen = pygame.Surface((WIN_W, WIN_H))
@@ -314,6 +322,13 @@ Examples:
         action='store_true',
         help='Draw thicker/brighter grid lines (subtle lines always present)'
     )
+    parser.add_argument(
+        '--viz-mode',
+        type=str,
+        choices=['wave', 'bar'],
+        default='wave',
+        help='Visualization mode: wave (default) or bar'
+    )
 
     args = parser.parse_args()
 
@@ -340,6 +355,7 @@ Examples:
     print("=" * 70)
     print(f"Input: {args.audio_file}")
     print(f"Output: {output_dir}/")
+    print(f"Mode: {args.viz_mode}")
     print()
 
     # Load audio
@@ -383,7 +399,8 @@ Examples:
         grid_surface = render_grid_composite(
             frame_data,
             palette_override=args.palette,
-            show_grid=args.show_grid
+            show_grid=args.show_grid,
+            viz_mode=args.viz_mode
         )
 
         # Save grid composite
@@ -397,7 +414,8 @@ Examples:
                 rank_surface = render_individual_rank(
                     frame_data,
                     rank,
-                    palette_override=args.palette
+                    palette_override=args.palette,
+                    viz_mode=args.viz_mode
                 )
                 rank_filename = f"{base_name}_rank{rank}_{idx:04d}_{actual_time:.1f}s.png"
                 rank_path = output_dir / rank_filename

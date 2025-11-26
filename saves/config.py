@@ -98,6 +98,14 @@ BEAT_BOOST = 1.5      # Multiplier for bar height on beat
 BEAT_DECAY = 0.9      # Decay rate for beat effect
 
 # ============================================================================
+# Part 3: Wave Visualization Configuration
+# ============================================================================
+WAVE_SCALE = 100          # Amplitude scaling factor (energy -> pixels)
+WAVE_MIN_HEIGHT = 5       # Minimum wave displacement (pixels)
+WAVE_SUBDIVISIONS = 4     # Interpolation smoothness (points between bands)
+WAVE_LINE_WIDTH = 3       # Wave outline thickness (pixels)
+
+# ============================================================================
 # Frequency Range Configuration
 # ============================================================================
 FMIN = 20.0      # Minimum frequency (Hz)

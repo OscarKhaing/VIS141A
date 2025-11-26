@@ -165,6 +165,279 @@ class BarVisualizer:
         return (r, g, b)
 
 
+class WaveVisualizer:
+    """
+    Renders continuous wave visualization across all 4 panels.
+    Part 3: Wave Visualization
+
+    Layout:
+    - Top row (ranks 0, 1): Wave grows upward from bottom edge
+    - Bottom row (ranks 2, 3): Wave grows downward from top edge (mirrored)
+    - Creates vertical symmetry across the horizontal center line
+    """
+
+    def __init__(self, rank, screen_width=WIN_W, screen_height=WIN_H):
+        """
+        Initialize wave visualizer.
+
+        Args:
+            rank: MPI rank (0-3)
+            screen_width: Width of screen in pixels
+            screen_height: Height of screen in pixels
+        """
+        self.rank = rank
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+
+        # Determine position in grid
+        self.is_top_row = rank < 2       # Ranks 0, 1 are top
+        self.is_left_col = rank % 2 == 0  # Ranks 0, 2 are left
+
+        # Global X offset for this rank's portion (based on actual screen width)
+        self.global_x_offset = 0 if self.is_left_col else screen_width
+
+        # Wave rendering parameters
+        self.num_points = N_MELS  # 96 points on the wave
+        self.total_width = screen_width * GRID_Q  # Total width across all columns
+
+        # Beat effect state
+        self.beat_boost = 1.0
+        self.beat_glow = 0.0
+
+    def render(self, screen, frame_data, neighbor_brightness=1.0):
+        """
+        Render wave visualization for this rank's quadrant.
+
+        Args:
+            screen: pygame Surface to render to
+            frame_data: dict containing:
+                - 'bands': full mel band array (96 values)
+                - 'beat': beat flag
+                - 'scene': scene index
+                - 'palette': palette index
+            neighbor_brightness: brightness multiplier from neighbor coupling
+        """
+        # Extract parameters
+        bands = frame_data['bands'].copy()
+        beat = frame_data['beat']
+        scene = frame_data['scene']
+        palette_idx = frame_data['palette']
+
+        # Update beat effects
+        if beat:
+            self.beat_boost = BEAT_BOOST
+            self.beat_glow = 1.0
+        else:
+            self.beat_boost = max(1.0, self.beat_boost * BEAT_DECAY)
+            self.beat_glow = max(0.0, self.beat_glow * BEAT_DECAY)
+
+        # Apply neighbor brightness
+        bands = bands * neighbor_brightness
+
+        # Fill background
+        bg_color = BACKGROUNDS[scene % len(BACKGROUNDS)]
+        screen.fill(bg_color)
+
+        # Get palette
+        palette = PALETTES[palette_idx % len(PALETTES)]
+
+        # Compute global wave points
+        wave_points = self._compute_wave_points(bands)
+
+        # Interpolate for smoother curve
+        smooth_points = self._interpolate_points(wave_points)
+
+        # Transform to local screen coordinates
+        local_points = self._transform_to_local(smooth_points)
+
+        # Render filled wave polygon
+        if len(local_points) >= 2:
+            self._render_wave_fill(screen, local_points, palette)
+
+            # Render wave outline
+            self._render_wave_line(screen, local_points, palette)
+
+        # Beat flash effect
+        if self.beat_glow > 0.1:
+            self._render_beat_flash(screen)
+
+    def _compute_wave_points(self, bands):
+        """
+        Compute global wave points from 96 mel bands.
+
+        Args:
+            bands: numpy array of mel band energies (96 values)
+
+        Returns:
+            list of (x, amplitude) tuples in global coordinates
+        """
+        points = []
+        x_step = self.total_width / (self.num_points - 1)  # ~20px per band
+
+        for i, energy in enumerate(bands):
+            x = i * x_step
+            # Amplitude scales with energy and beat boost
+            amplitude = max(WAVE_MIN_HEIGHT, energy * WAVE_SCALE * self.beat_boost)
+            points.append((x, amplitude))
+
+        return points
+
+    def _interpolate_points(self, points):
+        """
+        Interpolate between wave points for smoother curve.
+
+        Args:
+            points: list of (x, amplitude) tuples
+
+        Returns:
+            list of interpolated (x, amplitude) tuples
+        """
+        if len(points) < 2:
+            return points
+
+        smooth_points = []
+        num_subdivisions = WAVE_SUBDIVISIONS
+
+        for i in range(len(points) - 1):
+            x0, y0 = points[i]
+            x1, y1 = points[i + 1]
+
+            for t in range(num_subdivisions):
+                ratio = t / num_subdivisions
+                # Simple linear interpolation
+                x = x0 + (x1 - x0) * ratio
+                y = y0 + (y1 - y0) * ratio
+                smooth_points.append((x, y))
+
+        # Add the last point
+        smooth_points.append(points[-1])
+        return smooth_points
+
+    def _transform_to_local(self, global_points):
+        """
+        Transform global wave points to local screen coordinates.
+
+        - Clips to this rank's visible region
+        - Transforms Y based on row (top grows up, bottom grows down)
+
+        Args:
+            global_points: list of (global_x, amplitude) tuples
+
+        Returns:
+            list of (local_x, local_y) tuples for pygame rendering
+        """
+        local_points = []
+        margin = 50  # Include points slightly outside for smooth edges
+
+        for gx, amplitude in global_points:
+            # Convert global X to local X
+            local_x = gx - self.global_x_offset
+
+            # Skip points too far outside this rank's view
+            if local_x < -margin or local_x > self.screen_width + margin:
+                continue
+
+            # Y transformation based on row
+            if self.is_top_row:
+                # Wave grows upward from bottom of screen
+                local_y = self.screen_height - amplitude
+            else:
+                # Wave grows downward from top of screen (mirrored)
+                local_y = amplitude
+
+            # Clamp Y to screen bounds
+            local_y = max(0, min(self.screen_height, local_y))
+
+            local_points.append((local_x, local_y))
+
+        return local_points
+
+    def _render_wave_fill(self, screen, points, palette):
+        """
+        Render filled area under the wave.
+
+        Args:
+            screen: pygame Surface
+            points: list of (x, y) tuples (local coordinates)
+            palette: list of RGB tuples
+        """
+        if len(points) < 2:
+            return
+
+        fill_color = palette[0]  # Primary color from palette
+
+        # Brighten on beat
+        if self.beat_glow > 0.1:
+            fill_color = self._brighten_color(fill_color, 1.0 + 0.2 * self.beat_glow)
+
+        # Create polygon: wave points + baseline corners
+        polygon_points = list(points)
+
+        if self.is_top_row:
+            # Close polygon at bottom of screen
+            polygon_points.append((points[-1][0], self.screen_height))
+            polygon_points.append((points[0][0], self.screen_height))
+        else:
+            # Close polygon at top of screen
+            polygon_points.append((points[-1][0], 0))
+            polygon_points.append((points[0][0], 0))
+
+        # Draw filled polygon
+        if len(polygon_points) >= 3:
+            pygame.draw.polygon(screen, fill_color, polygon_points)
+
+    def _render_wave_line(self, screen, points, palette):
+        """
+        Render wave outline.
+
+        Args:
+            screen: pygame Surface
+            points: list of (x, y) tuples (local coordinates)
+            palette: list of RGB tuples
+        """
+        if len(points) < 2:
+            return
+
+        line_color = self._brighten_color(palette[1], 1.3)
+
+        # Brighten further on beat
+        if self.beat_glow > 0.1:
+            line_color = self._brighten_color(line_color, 1.0 + 0.3 * self.beat_glow)
+
+        # Draw lines connecting all points
+        pygame.draw.lines(screen, line_color, False, points, WAVE_LINE_WIDTH)
+
+    def _render_beat_flash(self, screen):
+        """
+        Render a semi-transparent white flash on beat.
+
+        Args:
+            screen: pygame Surface
+        """
+        flash_alpha = int(self.beat_glow * 40)  # Max 40 alpha
+        flash_surface = pygame.Surface((self.screen_width, self.screen_height))
+        flash_surface.set_alpha(flash_alpha)
+        flash_surface.fill((255, 255, 255))
+        screen.blit(flash_surface, (0, 0))
+
+    def _brighten_color(self, color, factor):
+        """
+        Brighten an RGB color by a factor.
+
+        Args:
+            color: (r, g, b) tuple
+            factor: brightness multiplier (>1.0 brightens)
+
+        Returns:
+            (r, g, b) tuple with values clamped to [0, 255]
+        """
+        r, g, b = color
+        r = min(255, int(r * factor))
+        g = min(255, int(g * factor))
+        b = min(255, int(b * factor))
+        return (r, g, b)
+
+
 def render_debug_hud(screen, frame_data, rank, font=None, neighbor_data=None):
     """
     Render debug HUD showing frame info.

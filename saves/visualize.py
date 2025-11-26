@@ -39,6 +39,7 @@ OPTIONS
     --debug                Show debug HUD with frame info, FPS, beat detection
     --keep-converted       Keep temporary converted WAV files (don't auto-delete)
     --neighbor-coupling    Enable Part 2: tiles influence each other's brightness
+    --viz-mode MODE        Visualization mode: 'wave' (default) or 'bar'
 
 FEATURES
 --------
@@ -148,7 +149,7 @@ from mpi4py import MPI
 # Import local modules
 from config import *
 from audio import AudioStream
-from visuals import BarVisualizer, render_debug_hud
+from visuals import BarVisualizer, WaveVisualizer, render_debug_hud
 
 
 # ============================================================================
@@ -387,46 +388,54 @@ def exchange_neighbor_energy(cart, local_bands, nbr_smooth, alpha):
 # MPI Visualization Setup
 # ============================================================================
 
-def setup_pygame_window(rank):
+def setup_pygame_window(rank, fullscreen=False):
     """
     Initialize pygame and create window for this rank.
 
     Args:
         rank: MPI rank (0-3)
+        fullscreen: If True, use fullscreen mode (for cluster deployment)
 
     Returns:
-        tuple (screen, clock) - pygame Surface and Clock
+        tuple (screen, clock, screen_width, screen_height)
     """
     # Set display
     os.environ['DISPLAY'] = ':0.0'
-
-    # Set window position based on rank
-    pos = WINDOW_POSITIONS[rank]
-    os.environ['SDL_VIDEO_WINDOW_POS'] = f"{pos[0]},{pos[1]}"
 
     # Initialize pygame
     pygame.display.init()
     pygame.font.init()
     pygame.mouse.set_visible(False)
 
-    # Create window
-    screen = pygame.display.set_mode(
-        (WIN_W, WIN_H),
-        pygame.NOFRAME  # Borderless
-    )
+    if fullscreen:
+        # Fullscreen mode: each node fills its entire screen
+        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+    else:
+        # Windowed mode: position windows in 2x2 grid on single display
+        pos = WINDOW_POSITIONS[rank]
+        os.environ['SDL_VIDEO_WINDOW_POS'] = f"{pos[0]},{pos[1]}"
+        screen = pygame.display.set_mode(
+            (WIN_W, WIN_H),
+            pygame.NOFRAME  # Borderless
+        )
+        screen_width = WIN_W
+        screen_height = WIN_H
+
     pygame.display.set_caption(f"Music Visualization - Rank {rank}")
 
     # Create clock
     clock = pygame.time.Clock()
 
-    return screen, clock
+    return screen, clock, screen_width, screen_height
 
 
 # ============================================================================
 # Main Visualization Loop
 # ============================================================================
 
-def run_visualization(wav_path, debug=False, neighbor_coupling=False, rank=0, comm=None):
+def run_visualization(wav_path, debug=False, neighbor_coupling=False, viz_mode='wave', fullscreen=False, rank=0, comm=None):
     """
     Run the main MPI visualization loop.
 
@@ -434,14 +443,26 @@ def run_visualization(wav_path, debug=False, neighbor_coupling=False, rank=0, co
         wav_path: Path to WAV file
         debug: Show debug HUD
         neighbor_coupling: Enable Part 2 neighbor coupling (default=False)
+        viz_mode: Visualization mode ('wave' or 'bar')
+        fullscreen: Use fullscreen mode (for cluster deployment)
         rank: MPI rank
         comm: MPI communicator
     """
     # Setup pygame window
-    screen, clock = setup_pygame_window(rank)
+    screen, clock, screen_width, screen_height = setup_pygame_window(rank, fullscreen)
 
-    # Initialize visualizer
-    visualizer = BarVisualizer(rank, WIN_W, WIN_H)
+    if rank == 0:
+        print(f"[Rank 0] Screen size: {screen_width}x{screen_height} (fullscreen={fullscreen})")
+
+    # Initialize visualizer based on mode
+    if viz_mode == 'wave':
+        visualizer = WaveVisualizer(rank, screen_width, screen_height)
+        if rank == 0:
+            print("[Rank 0] Part 3: Wave visualization mode")
+    else:
+        visualizer = BarVisualizer(rank, screen_width, screen_height)
+        if rank == 0:
+            print("[Rank 0] Using bar visualization mode")
 
     # Font for debug HUD
     debug_font = pygame.font.SysFont('monospace', 12) if debug else None
@@ -629,6 +650,18 @@ Examples:
         action='store_true',
         help='Enable Part 2 neighbor coupling (tiles influence each other)'
     )
+    parser.add_argument(
+        '--viz-mode',
+        type=str,
+        choices=['wave', 'bar'],
+        default='wave',
+        help='Visualization mode: wave (default) or bar'
+    )
+    parser.add_argument(
+        '--fullscreen',
+        action='store_true',
+        help='Fullscreen mode (for cluster deployment where each node has its own screen)'
+    )
 
     args = parser.parse_args()
 
@@ -664,6 +697,8 @@ Examples:
             wav_path,
             debug=args.debug,
             neighbor_coupling=args.neighbor_coupling,
+            viz_mode=args.viz_mode,
+            fullscreen=args.fullscreen,
             rank=rank,
             comm=comm
         )
