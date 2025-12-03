@@ -48,6 +48,30 @@ class BarVisualizer:
         self.beat_boost_current = 1.0
         self.beat_glow = 0.0
 
+        # Smoothed band values for attack/decay motion
+        self.smoothed_bands = np.zeros(self.n_bands, dtype=np.float32)
+
+    def _smooth_bands(self, new_bands):
+        """
+        Apply attack/decay smoothing to band values.
+        Fast attack (responsive to increases), slow decay (peaks hang in air).
+
+        Args:
+            new_bands: numpy array of new band energies
+
+        Returns:
+            numpy array of smoothed band values
+        """
+        for i in range(len(new_bands)):
+            if new_bands[i] > self.smoothed_bands[i]:
+                # Attack: fast response to increases
+                alpha = ATTACK_ALPHA
+            else:
+                # Decay: slow fall-off, peaks linger
+                alpha = DECAY_ALPHA
+            self.smoothed_bands[i] = (1 - alpha) * self.smoothed_bands[i] + alpha * new_bands[i]
+        return self.smoothed_bands.copy()
+
     def render(self, screen, frame_data, neighbor_brightness=1.0):
         """
         Render visualization frame.
@@ -69,6 +93,9 @@ class BarVisualizer:
 
         # Get assigned band slice
         bands_slice = all_bands[self.band_start:self.band_end]
+
+        # Apply temporal smoothing (attack/decay) for smooth motion
+        bands_slice = self._smooth_bands(bands_slice)
 
         # Apply neighbor brightness modulation (Part 2)
         bands_slice = bands_slice * neighbor_brightness
@@ -204,6 +231,87 @@ class WaveVisualizer:
         self.beat_boost = 1.0
         self.beat_glow = 0.0
 
+        # Smoothed band values for attack/decay motion
+        self.smoothed_bands = np.zeros(N_MELS, dtype=np.float32)
+
+        # Dynamic scale factor (auto-adjusts so max peak reaches target height)
+        self.dynamic_scale = WAVE_SCALE  # Start at default
+
+    def _smooth_bands(self, new_bands):
+        """
+        Apply attack/decay smoothing to band values.
+        Fast attack (responsive to increases), slow decay (peaks hang in air).
+
+        Args:
+            new_bands: numpy array of new band energies
+
+        Returns:
+            numpy array of smoothed band values
+        """
+        for i in range(len(new_bands)):
+            if new_bands[i] > self.smoothed_bands[i]:
+                # Attack: fast response to increases
+                alpha = ATTACK_ALPHA
+            else:
+                # Decay: slow fall-off, peaks linger
+                alpha = DECAY_ALPHA
+            self.smoothed_bands[i] = (1 - alpha) * self.smoothed_bands[i] + alpha * new_bands[i]
+        return self.smoothed_bands.copy()
+
+    def _horizontal_smooth(self, bands):
+        """
+        Apply horizontal smoothing to reduce pointiness between adjacent bands.
+        Uses convolution with a smoothing kernel applied multiple passes.
+
+        Args:
+            bands: numpy array of band energies
+
+        Returns:
+            numpy array of horizontally smoothed band values
+        """
+        # Use 5-point kernel for nice smooth curves
+        kernel = np.array(WAVE_SMOOTH_KERNEL_5, dtype=np.float32)
+        half_k = len(kernel) // 2
+
+        result = bands.copy()
+
+        # Apply smoothing multiple passes for extra roundness
+        for _ in range(WAVE_SMOOTH_PASSES):
+            # Pad edges to maintain array length
+            padded = np.pad(result, (half_k, half_k), mode='edge')
+            # Convolve and extract valid region
+            result = np.convolve(padded, kernel, mode='valid')
+
+        return result
+
+    def _compute_dynamic_scale(self, bands):
+        """
+        Compute dynamic scale factor so max peak reaches target screen height.
+        Uses smoothed adjustment to avoid jarring changes.
+
+        Args:
+            bands: numpy array of band energies (after smoothing)
+        """
+        # Find current max energy
+        max_energy = np.max(bands)
+        if max_energy < 0.001:
+            return  # Avoid division by zero during silence
+
+        # Target amplitude (45% of screen height)
+        target_amplitude = self.screen_height * WAVE_TARGET_HEIGHT_RATIO
+
+        # Calculate ideal scale to reach target height
+        # amplitude = energy * scale * beat_boost
+        # target = max_energy * ideal_scale * beat_boost
+        # ideal_scale = target / (max_energy * beat_boost)
+        ideal_scale = target_amplitude / (max_energy * self.beat_boost)
+
+        # Clamp to reasonable range
+        ideal_scale = max(WAVE_SCALE_MIN, min(WAVE_SCALE_MAX, ideal_scale))
+
+        # Smoothly adjust (slow lerp to avoid jarring changes)
+        self.dynamic_scale = (1 - WAVE_SCALE_SMOOTH_ALPHA) * self.dynamic_scale + WAVE_SCALE_SMOOTH_ALPHA * ideal_scale
+
     def render(self, screen, frame_data, neighbor_brightness=1.0):
         """
         Render wave visualization for this rank's quadrant.
@@ -231,8 +339,17 @@ class WaveVisualizer:
             self.beat_boost = max(1.0, self.beat_boost * BEAT_DECAY)
             self.beat_glow = max(0.0, self.beat_glow * BEAT_DECAY)
 
+        # Apply temporal smoothing (attack/decay) for smooth motion
+        bands = self._smooth_bands(bands)
+
+        # Apply horizontal smoothing to reduce pointiness
+        bands = self._horizontal_smooth(bands)
+
         # Apply neighbor brightness
         bands = bands * neighbor_brightness
+
+        # Compute dynamic scale factor (auto-adjusts amplitude to fill screen)
+        self._compute_dynamic_scale(bands)
 
         # Fill background
         bg_color = BACKGROUNDS[scene % len(BACKGROUNDS)]
@@ -276,8 +393,8 @@ class WaveVisualizer:
 
         for i, energy in enumerate(bands):
             x = i * x_step
-            # Amplitude scales with energy and beat boost
-            amplitude = max(WAVE_MIN_HEIGHT, energy * WAVE_SCALE * self.beat_boost)
+            # Amplitude scales with energy, dynamic scale, and beat boost
+            amplitude = max(WAVE_MIN_HEIGHT, energy * self.dynamic_scale * self.beat_boost)
             points.append((x, amplitude))
 
         return points

@@ -98,12 +98,31 @@ BEAT_BOOST = 1.5      # Multiplier for bar height on beat
 BEAT_DECAY = 0.9      # Decay rate for beat effect
 
 # ============================================================================
+# Band Smoothing Configuration (Attack/Decay)
+# ============================================================================
+# Creates smooth, professional motion: fast attack (responsive), slow decay (peaks hang)
+ATTACK_ALPHA = 0.6    # Fast attack: higher = faster response to increases (0-1)
+DECAY_ALPHA = 0.15    # Slow decay: lower = slower fall-off, peaks linger (0-1)
+
+# ============================================================================
 # Part 3: Wave Visualization Configuration
 # ============================================================================
 WAVE_SCALE = 100          # Amplitude scaling factor (energy -> pixels)
 WAVE_MIN_HEIGHT = 5       # Minimum wave displacement (pixels)
 WAVE_SUBDIVISIONS = 4     # Interpolation smoothness (points between bands)
 WAVE_LINE_WIDTH = 3       # Wave outline thickness (pixels)
+
+# Horizontal smoothing: reduces pointiness by blurring adjacent band values
+# Options: 3-point (responsive), 5-point (smoother), 7-point (very smooth)
+WAVE_SMOOTH_KERNEL_3 = [0.25, 0.5, 0.25]                    # 3-point: light smoothing
+WAVE_SMOOTH_KERNEL_5 = [0.0625, 0.25, 0.375, 0.25, 0.0625]  # 5-point: [1,4,6,4,1]/16
+WAVE_SMOOTH_PASSES = 2    # Number of smoothing passes (1-3, more = rounder)
+
+# Dynamic amplitude scaling: auto-adjusts so max peak reaches target height
+WAVE_TARGET_HEIGHT_RATIO = 0.45   # Target: max peak at 45% of screen height
+WAVE_SCALE_SMOOTH_ALPHA = 0.05    # Slow adjustment to avoid jarring changes (0-1)
+WAVE_SCALE_MIN = 50               # Minimum scale factor (prevents over-amplification)
+WAVE_SCALE_MAX = 500              # Maximum scale factor (prevents clipping)
 
 # ============================================================================
 # Frequency Range Configuration
