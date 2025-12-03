@@ -142,14 +142,325 @@ import sys
 import argparse
 import tempfile
 import wave
-import pygame
+import subprocess
+import glob
+import curses
 import numpy as np
 from mpi4py import MPI
 
-# Import local modules
+# Lazy imports - only load when needed to avoid conflicts
+# pygame and visualization modules are loaded only in MPI mode
+pygame = None
+AudioStream = None
+BarVisualizer = None
+WaveVisualizer = None
+render_debug_hud = None
+
+# Import config (always needed for constants)
 from config import *
-from audio import AudioStream
-from visuals import BarVisualizer, WaveVisualizer, render_debug_hud
+
+
+def _init_visualization_imports():
+    """Lazy-load pygame and visualization modules."""
+    global pygame, AudioStream, BarVisualizer, WaveVisualizer, render_debug_hud
+    if pygame is None:
+        import pygame as _pygame
+        pygame = _pygame
+        from audio import AudioStream as _AudioStream
+        from visuals import BarVisualizer as _BarVisualizer, WaveVisualizer as _WaveVisualizer, render_debug_hud as _render_debug_hud
+        AudioStream = _AudioStream
+        BarVisualizer = _BarVisualizer
+        WaveVisualizer = _WaveVisualizer
+        render_debug_hud = _render_debug_hud
+
+
+# ============================================================================
+# Launcher UI - File Discovery
+# ============================================================================
+
+def discover_machine_files():
+    """Find all *_exec machine files in the script directory."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    files = []
+    for f in os.listdir(script_dir):
+        if f.endswith('_exec'):
+            filepath = os.path.join(script_dir, f)
+            # Only include non-empty files
+            if os.path.isfile(filepath) and os.path.getsize(filepath) > 0:
+                files.append(f)
+    return sorted(files)
+
+
+def discover_audio_files():
+    """Find all audio files in assets/ directory."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(script_dir, 'assets')
+    files = []
+    if os.path.isdir(assets_dir):
+        for pattern in ['*.wav', '*.mp3']:
+            matches = glob.glob(os.path.join(assets_dir, pattern))
+            files.extend([os.path.relpath(f, script_dir) for f in matches])
+    return sorted(files)
+
+
+# ============================================================================
+# Launcher UI Class (Terminal-based with curses)
+# ============================================================================
+
+class TerminalLauncherUI:
+    """Curses-based terminal UI for SSH sessions."""
+
+    def __init__(self):
+        # Discover available files
+        self.machine_files = discover_machine_files()
+        self.audio_files = discover_audio_files()
+        self.viz_modes = ['wave', 'bar']
+
+        # Fields definition: (display_name, config_key, field_type)
+        self.fields = [
+            ('Machine File', 'machine_file', 'cycle'),
+            ('Audio File', 'audio_file', 'cycle'),
+            ('Viz Mode', 'viz_mode', 'cycle'),
+            ('Fullscreen', 'fullscreen', 'toggle'),
+            ('Debug HUD (show stats)', 'debug', 'toggle'),
+            ('Neighbor Coupling', 'neighbor_coupling', 'toggle'),
+            ('Keep Converted (MP3)', 'keep_converted', 'toggle'),
+        ]
+
+        # Find default indices for paprika_exec and lone_digger.wav
+        default_machine_idx = 0
+        for i, f in enumerate(self.machine_files):
+            if 'paprika' in f.lower():
+                default_machine_idx = i
+                break
+
+        default_audio_idx = 0
+        for i, f in enumerate(self.audio_files):
+            if 'lone_digger' in f.lower():
+                default_audio_idx = i
+                break
+
+        # Configuration state (indices for cycle fields, bools for toggles)
+        self.config = {
+            'machine_file': default_machine_idx,
+            'audio_file': default_audio_idx,
+            'viz_mode': 0,
+            'fullscreen': True,  # Default ON for cluster
+            'debug': False,
+            'neighbor_coupling': False,
+            'keep_converted': False,
+        }
+
+        self.selected_idx = 0  # Currently selected field
+
+    def _get_options_for_field(self, config_key):
+        """Get the list of options for a cycle field."""
+        if config_key == 'machine_file':
+            return self.machine_files
+        elif config_key == 'audio_file':
+            return self.audio_files
+        elif config_key == 'viz_mode':
+            return self.viz_modes
+        return []
+
+    def _get_display_value(self, config_key):
+        """Get the display string for a field's current value."""
+        if config_key in ['fullscreen', 'debug', 'neighbor_coupling', 'keep_converted']:
+            return 'ON' if self.config[config_key] else 'OFF'
+        else:
+            options = self._get_options_for_field(config_key)
+            idx = self.config[config_key]
+            if options and 0 <= idx < len(options):
+                return options[idx]
+            return '(none)'
+
+    def _adjust_field(self, direction):
+        """Adjust the currently selected field by direction (-1 or +1)."""
+        _, config_key, field_type = self.fields[self.selected_idx]
+
+        if field_type == 'toggle':
+            self.config[config_key] = not self.config[config_key]
+        elif field_type == 'cycle':
+            options = self._get_options_for_field(config_key)
+            if options:
+                current = self.config[config_key]
+                self.config[config_key] = (current + direction) % len(options)
+
+    def _build_command(self):
+        """Build the mpirun command from current configuration."""
+        script_path = os.path.abspath(__file__)
+        script_dir = os.path.dirname(script_path)
+
+        # Get selected values
+        machine_file = self.machine_files[self.config['machine_file']] if self.machine_files else None
+        audio_file = self.audio_files[self.config['audio_file']] if self.audio_files else None
+        viz_mode = self.viz_modes[self.config['viz_mode']]
+
+        if not machine_file or not audio_file:
+            return None
+
+        cmd = [
+            'mpirun', '-n', '4', '-pernode',
+            '-machinefile', os.path.join(script_dir, machine_file),
+            'python3', script_path,
+            os.path.join(script_dir, audio_file),
+            '--viz-mode', viz_mode,
+        ]
+
+        if self.config['fullscreen']:
+            cmd.append('--fullscreen')
+        if self.config['debug']:
+            cmd.append('--debug')
+        if self.config['neighbor_coupling']:
+            cmd.append('--neighbor-coupling')
+        if self.config['keep_converted']:
+            cmd.append('--keep-converted')
+
+        return cmd
+
+    def _draw(self, stdscr):
+        """Draw the UI using curses."""
+        stdscr.clear()
+        height, width = stdscr.getmaxyx()
+
+        # Title
+        title = "MUSIC VISUALIZATION LAUNCHER"
+        if width > len(title):
+            stdscr.addstr(1, (width - len(title)) // 2, title, curses.A_BOLD)
+
+        # Controls hint
+        hint = "UP/DOWN: navigate | LEFT/RIGHT: change | ENTER: launch | Q: quit"
+        if width > len(hint):
+            stdscr.addstr(2, (width - len(hint)) // 2, hint, curses.A_DIM)
+
+        # Fields
+        start_y = 5
+        for i, (display_name, config_key, _) in enumerate(self.fields):
+            if start_y + i >= height - 5:
+                break  # Don't draw past screen
+
+            is_selected = (i == self.selected_idx)
+            prefix = "> " if is_selected else "  "
+            value = self._get_display_value(config_key)
+            line = f"{prefix}{display_name:20} < {value} >"
+
+            # Truncate if too wide
+            if len(line) > width - 8:
+                line = line[:width - 11] + "..."
+
+            attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
+            try:
+                stdscr.addstr(start_y + i, 4, line, attr)
+            except curses.error:
+                pass  # Ignore if can't write (terminal too small)
+
+        # Command preview
+        cmd_y = start_y + len(self.fields) + 2
+        if cmd_y < height - 3:
+            separator = "-" * min(width - 8, 60)
+            try:
+                stdscr.addstr(cmd_y, 4, separator, curses.A_DIM)
+            except curses.error:
+                pass
+
+            cmd = self._build_command()
+            if cmd:
+                try:
+                    stdscr.addstr(cmd_y + 1, 4, "Command:", curses.A_DIM)
+                except curses.error:
+                    pass
+
+                cmd_str = ' '.join(cmd)
+                max_width = width - 8
+                # Wrap command across multiple lines
+                line_num = 0
+                for start in range(0, len(cmd_str), max_width):
+                    if cmd_y + 2 + line_num < height - 1:
+                        try:
+                            stdscr.addstr(cmd_y + 2 + line_num, 4, cmd_str[start:start + max_width])
+                        except curses.error:
+                            pass
+                    line_num += 1
+                    if line_num >= 3:  # Max 3 lines
+                        break
+            else:
+                try:
+                    stdscr.addstr(cmd_y + 1, 4, "Error: No machine file or audio file found", curses.A_BOLD)
+                except curses.error:
+                    pass
+
+        stdscr.refresh()
+
+    def _run_curses(self, stdscr):
+        """Main curses loop."""
+        curses.curs_set(0)  # Hide cursor
+        stdscr.keypad(True)  # Enable arrow keys
+
+        while True:
+            self._draw(stdscr)
+            key = stdscr.getch()
+
+            if key == curses.KEY_UP:
+                self.selected_idx = (self.selected_idx - 1) % len(self.fields)
+            elif key == curses.KEY_DOWN:
+                self.selected_idx = (self.selected_idx + 1) % len(self.fields)
+            elif key == curses.KEY_LEFT:
+                self._adjust_field(-1)
+            elif key == curses.KEY_RIGHT:
+                self._adjust_field(1)
+            elif key in (ord('\n'), ord('\r'), curses.KEY_ENTER, 10, 13):
+                cmd = self._build_command()
+                if cmd:
+                    return cmd
+            elif key in (ord('q'), ord('Q'), 27):  # q, Q, or ESC
+                return None
+
+    def run(self):
+        """Run the UI and return command or None."""
+        return curses.wrapper(self._run_curses)
+
+
+def launch_mpi_visualization(cmd):
+    """Launch MPI visualization via subprocess."""
+    print("=" * 60)
+    print("Launching MPI Visualization")
+    print("=" * 60)
+    print(f"Command: {' '.join(cmd)}")
+    print()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    try:
+        # Run subprocess directly without capturing output
+        # This allows real-time output and proper terminal handling
+        result = subprocess.run(cmd, cwd=script_dir)
+
+        if result.returncode != 0:
+            print(f"ERROR: mpirun exited with code {result.returncode}")
+            return result.returncode
+
+        print("Visualization completed.")
+        return 0
+    except FileNotFoundError:
+        print("ERROR: 'mpirun' not found. Is MPI installed?")
+        return 1
+    except Exception as e:
+        print(f"ERROR: Failed to launch: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_launcher_ui():
+    """Run the terminal launcher UI and launch visualization if configured."""
+    launcher = TerminalLauncherUI()
+    cmd = launcher.run()
+
+    if cmd:
+        return launch_mpi_visualization(cmd)
+    else:
+        print("Cancelled.")
+        return 0
 
 
 # ============================================================================
@@ -228,6 +539,9 @@ def convert_mp3_to_wav(mp3_path, wav_path=None, rank=0):
     """
     if rank != 0:
         return wav_path  # Non-rank-0 processes just return the path
+
+    # Lazy import pygame for conversion
+    _init_visualization_imports()
 
     # Generate temp file if not specified
     if wav_path is None:
@@ -448,6 +762,9 @@ def run_visualization(wav_path, debug=False, neighbor_coupling=False, viz_mode='
         rank: MPI rank
         comm: MPI communicator
     """
+    # Initialize pygame and visualization modules (lazy import)
+    _init_visualization_imports()
+
     # Setup pygame window
     screen, clock, screen_width, screen_height = setup_pygame_window(rank, fullscreen)
 
@@ -619,6 +936,38 @@ def run_visualization(wav_path, debug=False, neighbor_coupling=False, viz_mode='
 
 def main():
     """Main entry point."""
+    # Initialize MPI first to check mode
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    # ========================================================================
+    # LAUNCHER MODE: If running without MPI (size == 1) and no arguments
+    # ========================================================================
+    if size == 1 and len(sys.argv) == 1:
+        # No MPI, no arguments -> show launcher UI
+        return run_launcher_ui()
+
+    # ========================================================================
+    # ERROR: Running without MPI but with arguments
+    # ========================================================================
+    if size == 1 and len(sys.argv) > 1:
+        print(f"ERROR: This program requires {TOTAL_RANKS} MPI processes (got {size})")
+        print(f"Run with: mpirun -n {TOTAL_RANKS} python3 visualize.py <audio_file>")
+        print(f"Or run without arguments to use the launcher UI: python3 visualize.py")
+        return 1
+
+    # ========================================================================
+    # MPI MODE: Running with MPI
+    # ========================================================================
+
+    # Validate MPI configuration
+    if size != TOTAL_RANKS:
+        if rank == 0:
+            print(f"ERROR: This program requires {TOTAL_RANKS} MPI processes (got {size})")
+            print(f"Run with: mpiexec -n {TOTAL_RANKS} python3 visualize.py <audio_file>")
+        comm.Abort(1)
+
     # Parse arguments
     parser = argparse.ArgumentParser(
         description='All-in-One Music Visualization (auto-detects MP3/WAV)',
@@ -664,18 +1013,6 @@ Examples:
     )
 
     args = parser.parse_args()
-
-    # Initialize MPI
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    # Validate MPI configuration
-    if size != TOTAL_RANKS:
-        if rank == 0:
-            print(f"ERROR: This program requires {TOTAL_RANKS} MPI processes (got {size})")
-            print(f"Run with: mpiexec -n {TOTAL_RANKS} python3 visualize.py <audio_file>")
-        comm.Abort(1)
 
     # Prepare audio file (auto-detect and convert if needed)
     wav_path = None
@@ -726,11 +1063,13 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         print("\n[Interrupted] Exiting...")
-        pygame.quit()
+        if pygame is not None:
+            pygame.quit()
         sys.exit(0)
     except Exception as e:
         print(f"[ERROR] {e}")
         import traceback
         traceback.print_exc()
-        pygame.quit()
+        if pygame is not None:
+            pygame.quit()
         sys.exit(1)
