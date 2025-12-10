@@ -583,6 +583,10 @@ class RibbonVisualizer:
         self.global_x_offset = 0 if self.is_left_col else screen_width
         self.total_width = screen_width * GRID_Q
 
+        # Global Y offset for this rank's portion (unified view, no mirroring)
+        self.global_y_offset = 0 if self.is_top_row else screen_height
+        self.total_height = screen_height * GRID_P
+
         # Slice history: list of (t_param, bands_array) tuples
         self.slices = []
 
@@ -615,14 +619,13 @@ class RibbonVisualizer:
 
     def _smooth_bands(self, new_bands):
         """
-        Apply attack/decay smoothing to band values.
+        Apply attack/decay smoothing to band values (vectorized).
         """
-        for i in range(len(new_bands)):
-            if new_bands[i] > self.smoothed_bands[i]:
-                alpha = ATTACK_ALPHA
-            else:
-                alpha = DECAY_ALPHA
-            self.smoothed_bands[i] = (1 - alpha) * self.smoothed_bands[i] + alpha * new_bands[i]
+        # Vectorized: compute alpha mask based on whether value is rising or falling
+        rising = new_bands > self.smoothed_bands
+        alpha = np.where(rising, ATTACK_ALPHA, DECAY_ALPHA)
+        # Apply smoothing: smoothed = (1 - alpha) * smoothed + alpha * new
+        self.smoothed_bands = (1 - alpha) * self.smoothed_bands + alpha * new_bands
         return self.smoothed_bands.copy()
 
     def _horizontal_smooth(self, bands):
@@ -692,7 +695,8 @@ class RibbonVisualizer:
         pos_z = center_3d[2]  # Scalar, same for all points
 
         # Add wave height (vectorized)
-        heights = bands * self.dynamic_scale * self.beat_boost * amplitude_mult * 0.002
+        # Note: 0.0005 factor accounts for unified view (total_height = 2 * screen_height)
+        heights = bands * self.dynamic_scale * self.beat_boost * amplitude_mult * 0.0005
         pos_y = pos_y + heights
 
         # Vectorized perspective projection
@@ -701,21 +705,22 @@ class RibbonVisualizer:
         proj_y = pos_y * scale
 
         # Convert to global screen coordinates (vectorized)
+        # Map projected coords from [-1, 1] to pixel coordinates
         global_x = (proj_x + 1.0) * 0.5 * self.total_width
-        global_y_norm = (proj_y + 1.0) * 0.5
+        global_y = (proj_y + 1.0) * 0.5 * self.total_height
 
         # Stack into points array
-        points = np.column_stack((global_x, global_y_norm))
+        points = np.column_stack((global_x, global_y))
 
         return points, alpha, line_width
 
     def _transform_to_local(self, global_points):
         """
         Transform global wave points to local screen coordinates for this rank.
-        Vectorized for performance.
+        Vectorized for performance. Unified view (no mirroring).
 
         Args:
-            global_points: numpy array of shape (N, 2) with (global_x, global_y_norm)
+            global_points: numpy array of shape (N, 2) with (global_x, global_y) in pixels
 
         Returns:
             list of (local_x, local_y) tuples for pygame
@@ -725,23 +730,20 @@ class RibbonVisualizer:
 
         margin = 100  # Include points slightly outside for smooth edges
 
-        # Vectorized: extract columns
+        # Vectorized: extract columns and apply offsets
         local_x = global_points[:, 0] - self.global_x_offset
-        gy_norm = global_points[:, 1]
+        local_y = global_points[:, 1] - self.global_y_offset
 
-        # Vectorized: filter points within view
-        mask = (local_x >= -margin) & (local_x <= self.screen_width + margin)
+        # Vectorized: filter points within view (both X and Y)
+        mask_x = (local_x >= -margin) & (local_x <= self.screen_width + margin)
+        mask_y = (local_y >= -margin) & (local_y <= self.screen_height + margin)
+        mask = mask_x & mask_y
+
         local_x = local_x[mask]
-        gy_norm = gy_norm[mask]
+        local_y = local_y[mask]
 
         if len(local_x) == 0:
             return []
-
-        # Y transformation based on row (vectorized)
-        if self.is_top_row:
-            local_y = self.screen_height * (1 - gy_norm)
-        else:
-            local_y = self.screen_height * gy_norm
 
         # Return as list of tuples (pygame.draw.lines needs this)
         return list(zip(local_x.tolist(), local_y.tolist()))
@@ -794,6 +796,7 @@ class RibbonVisualizer:
         palette = PALETTES[palette_idx % len(PALETTES)]
 
         # Render slices back-to-front (far to near) for proper layering
+        # All slices rendered with depth-based fading for visual continuity
         for t_param, slice_bands in reversed(self.slices):
             global_points, alpha, line_width = self._compute_slice_screen_points(slice_bands, t_param)
 

@@ -265,7 +265,10 @@ class AudioStream:
 
     def get_next_frame(self):
         """
-        Get next audio analysis frame.
+        Get next audio analysis frame (with frame skipping for performance).
+
+        Processes one hop and skips ahead by HOPS_PER_FRAME to reduce frame count
+        by ~3x while maintaining visual quality.
 
         Returns:
             dict with keys:
@@ -282,7 +285,7 @@ class AudioStream:
         if self.current_pos + HOP > self.total_samples:
             return {
                 'tick': self.tick,
-                't_sec': self.tick * HOP_DURATION,
+                't_sec': self.current_pos / SR,
                 'bands': np.zeros(N_MELS, dtype=np.float32),
                 'flux': 0.0,
                 'beat': False,
@@ -291,13 +294,13 @@ class AudioStream:
                 'eos': True
             }
 
-        # Get next hop
+        # Process one hop
         audio_hop = self.audio[self.current_pos:self.current_pos + HOP]
-        self.current_pos += HOP
-
-        # Process hop
         mel_bands = self.stft.process_hop(audio_hop)
         flux, beat = self.beat_detector.process(mel_bands)
+
+        # Skip ahead by HOPS_PER_FRAME to reduce frame count (~3x speedup)
+        self.current_pos += HOP * HOPS_PER_FRAME
 
         # Update scene/palette on strong beats
         if beat:
@@ -312,7 +315,7 @@ class AudioStream:
 
         return {
             'tick': self.tick,
-            't_sec': self.tick * HOP_DURATION,
+            't_sec': self.current_pos / SR,
             'bands': mel_bands,
             'flux': flux,
             'beat': beat,
