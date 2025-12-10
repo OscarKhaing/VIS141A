@@ -555,6 +555,309 @@ class WaveVisualizer:
         return (r, g, b)
 
 
+class RibbonVisualizer:
+    """
+    3D ribbon wave visualization.
+    Each audio frame becomes a slice traveling along a diagonal path
+    from near (bottom-left) to far (middle-right), creating depth illusion.
+    """
+
+    def __init__(self, rank, screen_width=WIN_W, screen_height=WIN_H):
+        """
+        Initialize ribbon visualizer.
+
+        Args:
+            rank: MPI rank (0-3)
+            screen_width: Width of screen in pixels
+            screen_height: Height of screen in pixels
+        """
+        self.rank = rank
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+
+        # Determine position in grid
+        self.is_top_row = rank < 2
+        self.is_left_col = rank % 2 == 0
+
+        # Global X offset for this rank's portion
+        self.global_x_offset = 0 if self.is_left_col else screen_width
+        self.total_width = screen_width * GRID_Q
+
+        # Slice history: list of (t_param, bands_array) tuples
+        self.slices = []
+
+        # Smoothed band values for attack/decay motion
+        self.smoothed_bands = np.zeros(N_MELS, dtype=np.float32)
+
+        # Dynamic scale factor
+        self.dynamic_scale = WAVE_SCALE
+
+        # Beat state
+        self.beat_boost = 1.0
+        self.beat_glow = 0.0
+
+        # Precompute path vectors
+        self.path_start = np.array(RIBBON_PATH_START, dtype=np.float32)
+        self.path_end = np.array(RIBBON_PATH_END, dtype=np.float32)
+        self.path_dir = self.path_end - self.path_start
+
+        # Sideways direction (perpendicular to path, in x-y plane)
+        # Cross path direction with z-axis to get sideways vector
+        self.side_dir = np.array([self.path_dir[1], -self.path_dir[0], 0], dtype=np.float32)
+        side_len = np.linalg.norm(self.side_dir)
+        if side_len > 0:
+            self.side_dir = self.side_dir / side_len
+
+        # Precompute for vectorized operations (performance optimization)
+        self.s_values = np.linspace(-1, 1, N_MELS, dtype=np.float32)
+        self.side_dir_x = self.side_dir[0] * RIBBON_SLICE_WIDTH
+        self.side_dir_y = self.side_dir[1] * RIBBON_SLICE_WIDTH
+
+    def _smooth_bands(self, new_bands):
+        """
+        Apply attack/decay smoothing to band values.
+        """
+        for i in range(len(new_bands)):
+            if new_bands[i] > self.smoothed_bands[i]:
+                alpha = ATTACK_ALPHA
+            else:
+                alpha = DECAY_ALPHA
+            self.smoothed_bands[i] = (1 - alpha) * self.smoothed_bands[i] + alpha * new_bands[i]
+        return self.smoothed_bands.copy()
+
+    def _horizontal_smooth(self, bands):
+        """
+        Apply horizontal smoothing to reduce pointiness.
+        """
+        kernel = np.array(WAVE_SMOOTH_KERNEL_5, dtype=np.float32)
+        half_k = len(kernel) // 2
+        result = bands.copy()
+        for _ in range(WAVE_SMOOTH_PASSES):
+            padded = np.pad(result, (half_k, half_k), mode='edge')
+            result = np.convolve(padded, kernel, mode='valid')
+        return result
+
+    def _compute_dynamic_scale(self, bands):
+        """
+        Compute dynamic scale factor so max peak reaches target height.
+        """
+        max_energy = np.max(bands)
+        if max_energy < 0.001:
+            return
+        target_amplitude = self.screen_height * WAVE_TARGET_HEIGHT_RATIO
+        ideal_scale = target_amplitude / (max_energy * self.beat_boost)
+        ideal_scale = max(WAVE_SCALE_MIN, min(WAVE_SCALE_MAX, ideal_scale))
+        self.dynamic_scale = (1 - WAVE_SCALE_SMOOTH_ALPHA) * self.dynamic_scale + WAVE_SCALE_SMOOTH_ALPHA * ideal_scale
+
+    def _get_path_point(self, t):
+        """Get 3D point along diagonal path for parameter t in [0,1]."""
+        return (1 - t) * self.path_start + t * self.path_end
+
+    def _project_3d_to_2d(self, point_3d):
+        """
+        Simple perspective projection from 3D to normalized coordinates.
+        Returns (proj_x, proj_y, scale) where scale indicates depth.
+        """
+        x, y, z = point_3d
+        # Perspective divide (larger z = smaller on screen)
+        scale = 1.0 / (z + 0.1)  # +0.1 to avoid division by zero
+        proj_x = x * scale
+        proj_y = y * scale
+        return proj_x, proj_y, scale
+
+    def _compute_slice_screen_points(self, bands, t_param):
+        """
+        Compute 2D screen points for a slice at parameter t.
+        Vectorized for performance.
+
+        Args:
+            bands: numpy array of band energies for this slice
+            t_param: position along path (0 = near, 1 = far)
+
+        Returns:
+            tuple (points_array, alpha, line_width) where points is numpy array shape (N, 2)
+        """
+        center_3d = self._get_path_point(t_param)
+
+        # Depth-based attenuation
+        amplitude_mult = RIBBON_NEAR_AMPLITUDE + (RIBBON_FAR_AMPLITUDE - RIBBON_NEAR_AMPLITUDE) * t_param
+        alpha = RIBBON_NEAR_ALPHA + (RIBBON_FAR_ALPHA - RIBBON_NEAR_ALPHA) * t_param
+
+        # Line width decreases with depth
+        line_width = max(1, int(RIBBON_LINE_WIDTH * (1 - t_param * 0.5)))
+
+        # Vectorized: compute all 3D positions at once
+        pos_x = center_3d[0] + self.s_values * self.side_dir_x
+        pos_y = center_3d[1] + self.s_values * self.side_dir_y
+        pos_z = center_3d[2]  # Scalar, same for all points
+
+        # Add wave height (vectorized)
+        heights = bands * self.dynamic_scale * self.beat_boost * amplitude_mult * 0.002
+        pos_y = pos_y + heights
+
+        # Vectorized perspective projection
+        scale = 1.0 / (pos_z + 0.1)
+        proj_x = pos_x * scale
+        proj_y = pos_y * scale
+
+        # Convert to global screen coordinates (vectorized)
+        global_x = (proj_x + 1.0) * 0.5 * self.total_width
+        global_y_norm = (proj_y + 1.0) * 0.5
+
+        # Stack into points array
+        points = np.column_stack((global_x, global_y_norm))
+
+        return points, alpha, line_width
+
+    def _transform_to_local(self, global_points):
+        """
+        Transform global wave points to local screen coordinates for this rank.
+        Vectorized for performance.
+
+        Args:
+            global_points: numpy array of shape (N, 2) with (global_x, global_y_norm)
+
+        Returns:
+            list of (local_x, local_y) tuples for pygame
+        """
+        if len(global_points) == 0:
+            return []
+
+        margin = 100  # Include points slightly outside for smooth edges
+
+        # Vectorized: extract columns
+        local_x = global_points[:, 0] - self.global_x_offset
+        gy_norm = global_points[:, 1]
+
+        # Vectorized: filter points within view
+        mask = (local_x >= -margin) & (local_x <= self.screen_width + margin)
+        local_x = local_x[mask]
+        gy_norm = gy_norm[mask]
+
+        if len(local_x) == 0:
+            return []
+
+        # Y transformation based on row (vectorized)
+        if self.is_top_row:
+            local_y = self.screen_height * (1 - gy_norm)
+        else:
+            local_y = self.screen_height * gy_norm
+
+        # Return as list of tuples (pygame.draw.lines needs this)
+        return list(zip(local_x.tolist(), local_y.tolist()))
+
+    def render(self, screen, frame_data, neighbor_brightness=1.0):
+        """
+        Render 3D ribbon visualization.
+
+        Args:
+            screen: pygame Surface to render to
+            frame_data: dict with 'bands', 'beat', 'scene', 'palette'
+            neighbor_brightness: brightness multiplier from neighbor coupling
+        """
+        bands = frame_data['bands'].copy()
+        beat = frame_data['beat']
+        scene = frame_data['scene']
+        palette_idx = frame_data['palette']
+
+        # Update beat effects
+        if beat:
+            self.beat_boost = BEAT_BOOST
+            self.beat_glow = 1.0
+        else:
+            self.beat_boost = max(1.0, self.beat_boost * BEAT_DECAY)
+            self.beat_glow = max(0.0, self.beat_glow * BEAT_DECAY)
+
+        # Apply smoothing
+        bands = self._smooth_bands(bands)
+        bands = self._horizontal_smooth(bands)
+        bands = bands * neighbor_brightness
+
+        # Compute dynamic scale
+        self._compute_dynamic_scale(bands)
+
+        # Add new slice at t=0 (front/near)
+        self.slices.insert(0, (0.0, bands.copy()))
+
+        # Advance all slices along path
+        new_slices = []
+        for t_param, slice_bands in self.slices:
+            t_param += RIBBON_SLICE_SPEED
+            if t_param <= 1.0:
+                new_slices.append((t_param, slice_bands))
+        self.slices = new_slices[:RIBBON_NUM_SLICES]
+
+        # Fill background
+        bg_color = BACKGROUNDS[scene % len(BACKGROUNDS)]
+        screen.fill(bg_color)
+
+        palette = PALETTES[palette_idx % len(PALETTES)]
+
+        # Render slices back-to-front (far to near) for proper layering
+        for t_param, slice_bands in reversed(self.slices):
+            global_points, alpha, line_width = self._compute_slice_screen_points(slice_bands, t_param)
+
+            # Transform to local coordinates
+            local_points = self._transform_to_local(global_points)
+
+            if len(local_points) >= 2:
+                self._render_slice(screen, local_points, palette, alpha, line_width, t_param)
+
+        # Beat flash
+        if self.beat_glow > 0.1:
+            self._render_beat_flash(screen)
+
+    def _render_slice(self, screen, points, palette, alpha, line_width, t_param):
+        """
+        Render a single ribbon slice.
+
+        Args:
+            screen: pygame Surface
+            points: list of (x, y) local screen coordinates
+            palette: color palette
+            alpha: opacity (0-1)
+            line_width: line thickness
+            t_param: depth parameter (0=near, 1=far)
+        """
+        if len(points) < 2:
+            return
+
+        # Choose color based on depth (near slices use first color, far use last)
+        color_idx = min(int(t_param * len(palette)), len(palette) - 1)
+        base_color = palette[color_idx]
+
+        # Apply alpha (fade with depth)
+        color = self._apply_alpha(base_color, alpha)
+
+        # Brighten on beat
+        if self.beat_glow > 0.1:
+            color = self._brighten_color(color, 1.0 + 0.3 * self.beat_glow)
+
+        # Draw the slice as connected lines
+        pygame.draw.lines(screen, color, False, points, line_width)
+
+    def _apply_alpha(self, color, alpha):
+        """Apply alpha by darkening the color (simulating transparency on dark bg)."""
+        r, g, b = color
+        return (int(r * alpha), int(g * alpha), int(b * alpha))
+
+    def _render_beat_flash(self, screen):
+        """Render a semi-transparent white flash on beat."""
+        flash_alpha = int(self.beat_glow * 40)
+        flash_surface = pygame.Surface((self.screen_width, self.screen_height))
+        flash_surface.set_alpha(flash_alpha)
+        flash_surface.fill((255, 255, 255))
+        screen.blit(flash_surface, (0, 0))
+
+    def _brighten_color(self, color, factor):
+        """Brighten an RGB color by a factor."""
+        r, g, b = color
+        r = min(255, int(r * factor))
+        g = min(255, int(g * factor))
+        b = min(255, int(b * factor))
+        return (r, g, b)
+
+
 def render_debug_hud(screen, frame_data, rank, font=None, neighbor_data=None):
     """
     Render debug HUD showing frame info.

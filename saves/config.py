@@ -138,6 +138,29 @@ NEIGHBOR_COUPLING_K = 0.6       # Coupling strength multiplier
 NEIGHBOR_BASE_BRIGHTNESS = 0.9  # Base brightness when using neighbor coupling
 
 # ============================================================================
+# Part 4: 3D Ribbon Wave Configuration
+# ============================================================================
+# Each audio frame becomes a "ribbon slice" traveling along a diagonal path
+# from near (bottom-left) to far (middle-right), creating depth illusion.
+
+RIBBON_NUM_SLICES = 60         # Number of historical frames to display
+RIBBON_SLICE_SPEED = 0.02      # How fast slices move along path (t increment per frame)
+RIBBON_SLICE_WIDTH = 1.2       # Width of each slice in world units
+
+# 3D Path endpoints (normalized coordinates: x, y, z)
+RIBBON_PATH_START = (-0.8, -0.3, 0.5)   # Near, bottom-left
+RIBBON_PATH_END = (1.2, 0.1, 3.0)       # Far, 3/4 right of screen
+
+# Depth fading (creates sense of distance)
+RIBBON_NEAR_ALPHA = 1.0        # Opacity at near (full)
+RIBBON_FAR_ALPHA = 0.2         # Opacity at far (faded)
+RIBBON_NEAR_AMPLITUDE = 1.0    # Wave height multiplier at near
+RIBBON_FAR_AMPLITUDE = 0.4     # Wave height multiplier at far
+
+# Line rendering
+RIBBON_LINE_WIDTH = 4          # Line thickness for each slice
+
+# ============================================================================
 # Data Types
 # ============================================================================
 DTYPE_FLOAT = 'float32'

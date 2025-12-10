@@ -154,6 +154,7 @@ pygame = None
 AudioStream = None
 BarVisualizer = None
 WaveVisualizer = None
+RibbonVisualizer = None
 render_debug_hud = None
 
 # Import config (always needed for constants)
@@ -162,15 +163,16 @@ from config import *
 
 def _init_visualization_imports():
     """Lazy-load pygame and visualization modules."""
-    global pygame, AudioStream, BarVisualizer, WaveVisualizer, render_debug_hud
+    global pygame, AudioStream, BarVisualizer, WaveVisualizer, RibbonVisualizer, render_debug_hud
     if pygame is None:
         import pygame as _pygame
         pygame = _pygame
         from audio import AudioStream as _AudioStream
-        from visuals import BarVisualizer as _BarVisualizer, WaveVisualizer as _WaveVisualizer, render_debug_hud as _render_debug_hud
+        from visuals import BarVisualizer as _BarVisualizer, WaveVisualizer as _WaveVisualizer, RibbonVisualizer as _RibbonVisualizer, render_debug_hud as _render_debug_hud
         AudioStream = _AudioStream
         BarVisualizer = _BarVisualizer
         WaveVisualizer = _WaveVisualizer
+        RibbonVisualizer = _RibbonVisualizer
         render_debug_hud = _render_debug_hud
 
 
@@ -214,7 +216,7 @@ class TerminalLauncherUI:
         # Discover available files
         self.machine_files = discover_machine_files()
         self.audio_files = discover_audio_files()
-        self.viz_modes = ['wave', 'bar']
+        self.viz_modes = ['wave', 'bar', 'ribbon']
 
         # Fields definition: (display_name, config_key, field_type)
         self.fields = [
@@ -772,7 +774,11 @@ def run_visualization(wav_path, debug=False, neighbor_coupling=False, viz_mode='
         print(f"[Rank 0] Screen size: {screen_width}x{screen_height} (fullscreen={fullscreen})")
 
     # Initialize visualizer based on mode
-    if viz_mode == 'wave':
+    if viz_mode == 'ribbon':
+        visualizer = RibbonVisualizer(rank, screen_width, screen_height)
+        if rank == 0:
+            print("[Rank 0] Part 4: 3D Ribbon visualization mode")
+    elif viz_mode == 'wave':
         visualizer = WaveVisualizer(rank, screen_width, screen_height)
         if rank == 0:
             print("[Rank 0] Part 3: Wave visualization mode")
@@ -1002,9 +1008,9 @@ Examples:
     parser.add_argument(
         '--viz-mode',
         type=str,
-        choices=['wave', 'bar'],
+        choices=['wave', 'bar', 'ribbon'],
         default='wave',
-        help='Visualization mode: wave (default) or bar'
+        help='Visualization mode: wave (default), bar, or ribbon (3D)'
     )
     parser.add_argument(
         '--fullscreen',
